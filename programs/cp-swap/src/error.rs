@@ -42,4 +42,6 @@ pub enum ErrorCode {
     NoFeeCollect,
     #[msg("Lamports calculate error")]
     LamportsCalculateError,
+    #[msg("Invalid transfer-hook account framing")]
+    InvalidHookAccountFraming,
 }

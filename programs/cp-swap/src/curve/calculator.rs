@@ -107,7 +107,9 @@ impl CurveCalculator {
 
         let input_amount_less_fees = if is_creator_fee_on_input {
             let total_fee = Fees::trading_fee(input_amount, trade_fee_rate + creator_fee_rate)?;
-            creator_fee = Fees::split_creator_fee(total_fee, trade_fee_rate, creator_fee_rate)?;
+            if creator_fee_rate != 0 {
+                creator_fee = Fees::split_creator_fee(total_fee, trade_fee_rate, creator_fee_rate)?;
+            }
             trade_fee = total_fee - creator_fee;
             input_amount.checked_sub(total_fee)?
         } else {
@@ -177,7 +179,9 @@ impl CurveCalculator {
             )
             .unwrap();
             let total_fee = input_amount_with_fee - input_amount_swapped;
-            creator_fee = Fees::split_creator_fee(total_fee, trade_fee_rate, creator_fee_rate)?;
+            if creator_fee_rate != 0 {
+                creator_fee = Fees::split_creator_fee(total_fee, trade_fee_rate, creator_fee_rate)?;
+            }
             trade_fee = total_fee - creator_fee;
             input_amount_with_fee
         } else {
@@ -216,6 +220,26 @@ impl CurveCalculator {
             token_1_vault_amount,
             round_direction,
         )
+    }
+}
+
+#[cfg(test)]
+mod zero_creator_fee_tests {
+    use super::CurveCalculator;
+
+    #[test]
+    fn creator_fee_on_input_handles_disabled_creator_fee_for_both_swap_modes() {
+        let swap_in = CurveCalculator::swap_base_input(10, 1_000_000, 1_000_000, 0, 0, 0, 0, true)
+            .expect("a zero creator-fee rate must not divide by zero");
+        assert_eq!(swap_in.output_amount, 9);
+        assert_eq!(swap_in.trade_fee, 0);
+        assert_eq!(swap_in.creator_fee, 0);
+
+        let swap_out = CurveCalculator::swap_base_output(9, 1_000_000, 1_000_000, 0, 0, 0, 0, true)
+            .expect("a zero creator-fee rate must not divide by zero");
+        assert_eq!(swap_out.input_amount, 10);
+        assert_eq!(swap_out.trade_fee, 0);
+        assert_eq!(swap_out.creator_fee, 0);
     }
 }
 

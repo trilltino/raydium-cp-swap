@@ -5,6 +5,7 @@ use crate::utils::token::*;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
+use std::ops::Range;
 
 #[derive(Accounts)]
 pub struct Swap<'info> {
@@ -72,7 +73,65 @@ pub struct Swap<'info> {
     pub observation_state: AccountLoader<'info, ObservationState>,
 }
 
-pub fn swap_base_input(ctx: Context<Swap>, amount_in: u64, minimum_amount_out: u64) -> Result<()> {
+pub fn swap_base_input<'info>(
+    ctx: Context<'info, Swap<'info>>,
+    amount_in: u64,
+    minimum_amount_out: u64,
+) -> Result<()> {
+    swap_base_input_inner(ctx, amount_in, minimum_amount_out, &[], &[])
+}
+
+pub fn swap_base_input_v2<'info>(
+    ctx: Context<'info, Swap<'info>>,
+    amount_in: u64,
+    minimum_amount_out: u64,
+    input_hook_account_count: u16,
+    output_hook_account_count: u16,
+) -> Result<()> {
+    let (input_range, output_range) = hook_account_ranges(
+        ctx.remaining_accounts.len(),
+        input_hook_account_count,
+        output_hook_account_count,
+    )?;
+    let input_hook_accounts = ctx.remaining_accounts[input_range].to_vec();
+    let output_hook_accounts = ctx.remaining_accounts[output_range].to_vec();
+    swap_base_input_inner(
+        ctx,
+        amount_in,
+        minimum_amount_out,
+        &input_hook_accounts,
+        &output_hook_accounts,
+    )
+}
+
+fn hook_account_ranges(
+    remaining_account_count: usize,
+    input_count: u16,
+    output_count: u16,
+) -> Result<(Range<usize>, Range<usize>)> {
+    require!(
+        (input_count == 0 || input_count >= 2) && (output_count == 0 || output_count >= 2),
+        ErrorCode::InvalidHookAccountFraming
+    );
+    let input_end = usize::from(input_count);
+    let output_end = input_end
+        .checked_add(usize::from(output_count))
+        .ok_or(ErrorCode::InvalidHookAccountFraming)?;
+    require_eq!(
+        output_end,
+        remaining_account_count,
+        ErrorCode::InvalidHookAccountFraming
+    );
+    Ok((0..input_end, input_end..output_end))
+}
+
+fn swap_base_input_inner<'info>(
+    ctx: Context<'info, Swap<'info>>,
+    amount_in: u64,
+    minimum_amount_out: u64,
+    input_hook_accounts: &[AccountInfo<'info>],
+    output_hook_accounts: &[AccountInfo<'info>],
+) -> Result<()> {
     let block_timestamp = solana_program::clock::Clock::get()?.unix_timestamp as u64;
     let pool_id = ctx.accounts.pool_state.key();
     let pool_state = &mut ctx.accounts.pool_state.load_mut()?;
@@ -179,7 +238,7 @@ pub fn swap_base_input(ctx: Context<Swap>, amount_in: u64, minimum_amount_out: u
     });
     require_gte!(constant_after, constant_before);
 
-    transfer_from_user_to_pool_vault(
+    transfer_from_user_to_pool_vault_with_hook_accounts(
         ctx.accounts.payer.to_account_info(),
         ctx.accounts.input_token_account.to_account_info(),
         ctx.accounts.input_vault.to_account_info(),
@@ -187,9 +246,10 @@ pub fn swap_base_input(ctx: Context<Swap>, amount_in: u64, minimum_amount_out: u
         ctx.accounts.input_token_program.to_account_info(),
         input_transfer_amount,
         ctx.accounts.input_token_mint.decimals,
+        input_hook_accounts,
     )?;
 
-    transfer_from_pool_vault_to_user(
+    transfer_from_pool_vault_to_user_with_hook_accounts(
         ctx.accounts.authority.to_account_info(),
         ctx.accounts.output_vault.to_account_info(),
         ctx.accounts.output_token_account.to_account_info(),
@@ -198,6 +258,7 @@ pub fn swap_base_input(ctx: Context<Swap>, amount_in: u64, minimum_amount_out: u
         output_transfer_amount,
         ctx.accounts.output_token_mint.decimals,
         &[&[crate::AUTH_SEED.as_bytes(), &[pool_state.auth_bump]]],
+        output_hook_accounts,
     )?;
 
     // update the previous price to the observation
@@ -209,4 +270,23 @@ pub fn swap_base_input(ctx: Context<Swap>, amount_in: u64, minimum_amount_out: u
     pool_state.recent_epoch = Clock::get()?.epoch;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hook_account_ranges;
+
+    #[test]
+    fn hook_account_ranges_keep_transfer_slices_disjoint() {
+        let (input, output) = hook_account_ranges(7, 3, 4).unwrap();
+        assert_eq!(input, 0..3);
+        assert_eq!(output, 3..7);
+    }
+
+    #[test]
+    fn hook_account_ranges_reject_short_or_unframed_tails() {
+        assert!(hook_account_ranges(1, 1, 0).is_err());
+        assert!(hook_account_ranges(3, 2, 0).is_err());
+        assert!(hook_account_ranges(5, 2, 2).is_err());
+    }
 }

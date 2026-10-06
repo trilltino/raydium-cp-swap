@@ -24,6 +24,40 @@ declare_id!("DRaycpLY18LhpbydsBWbVJtxpNv9oXPgjRSfpF2bWpYb");
 #[cfg(not(feature = "devnet"))]
 declare_id!("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
 
+#[cfg(test)]
+mod versioned_instruction_abi_tests {
+    use anchor_lang::InstructionData;
+
+    #[test]
+    fn swap_base_input_v1_layout_is_unchanged() {
+        let data = crate::instruction::SwapBaseInput {
+            amount_in: 0x0102_0304_0506_0708,
+            minimum_amount_out: 0x1112_1314_1516_1718,
+        }
+        .data();
+
+        assert_eq!(&data[..8], &[143, 190, 90, 218, 196, 30, 51, 222]);
+        assert_eq!(
+            &data[8..],
+            &[8, 7, 6, 5, 4, 3, 2, 1, 24, 23, 22, 21, 20, 19, 18, 17]
+        );
+    }
+
+    #[test]
+    fn swap_base_input_v2_frames_each_transfer_slice_in_data() {
+        let data = crate::instruction::SwapBaseInputV2 {
+            amount_in: 1,
+            minimum_amount_out: 2,
+            input_hook_account_count: 3,
+            output_hook_account_count: 4,
+        }
+        .data();
+
+        assert_eq!(&data[..8], &[179, 135, 209, 217, 135, 75, 40, 58]);
+        assert_eq!(&data[24..], &[3, 0, 4, 0]);
+    }
+}
+
 pub mod admin {
     #[cfg(not(feature = "localnet"))]
     use super::pubkey;
@@ -352,12 +386,30 @@ pub mod raydium_cp_swap {
     /// * `amount_in` -  input amount to transfer, output to DESTINATION is based on the exchange rate
     /// * `minimum_amount_out` -  Minimum amount of output token, prevents excessive slippage
     ///
-    pub fn swap_base_input(
-        ctx: Context<Swap>,
+    pub fn swap_base_input<'info>(
+        ctx: Context<'info, Swap<'info>>,
         amount_in: u64,
         minimum_amount_out: u64,
     ) -> Result<()> {
         instructions::swap_base_input(ctx, amount_in, minimum_amount_out)
+    }
+
+    /// Hook-aware exact-input swap. Remaining accounts are framed as the input
+    /// transfer slice followed by the output transfer slice.
+    pub fn swap_base_input_v2<'info>(
+        ctx: Context<'info, Swap<'info>>,
+        amount_in: u64,
+        minimum_amount_out: u64,
+        input_hook_account_count: u16,
+        output_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::swap_base_input_v2(
+            ctx,
+            amount_in,
+            minimum_amount_out,
+            input_hook_account_count,
+            output_hook_account_count,
+        )
     }
 
     /// Swap the tokens in the pool base output amount

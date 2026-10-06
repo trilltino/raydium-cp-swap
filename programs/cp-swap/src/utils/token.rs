@@ -23,21 +23,42 @@ pub fn transfer_from_user_to_pool_vault<'a>(
     amount: u64,
     mint_decimals: u8,
 ) -> Result<()> {
+    transfer_from_user_to_pool_vault_with_hook_accounts(
+        authority,
+        from,
+        to_vault,
+        mint,
+        token_program,
+        amount,
+        mint_decimals,
+        &[],
+    )
+}
+
+pub fn transfer_from_user_to_pool_vault_with_hook_accounts<'a>(
+    authority: AccountInfo<'a>,
+    from: AccountInfo<'a>,
+    to_vault: AccountInfo<'a>,
+    mint: AccountInfo<'a>,
+    token_program: AccountInfo<'a>,
+    amount: u64,
+    mint_decimals: u8,
+    hook_accounts: &[AccountInfo<'a>],
+) -> Result<()> {
     if amount == 0 {
         return Ok(());
     }
-    token_2022::transfer_checked(
-        CpiContext::new(
-            *token_program.key,
-            token_2022::TransferChecked {
-                from,
-                to: to_vault,
-                authority,
-                mint,
-            },
-        ),
+    validate_transfer_hook_accounts(&mint, hook_accounts)?;
+    transfer_checked_with_hook_accounts(
+        from,
+        mint,
+        to_vault,
+        authority,
+        token_program,
         amount,
         mint_decimals,
+        &[],
+        hook_accounts,
     )
 }
 
@@ -51,23 +72,121 @@ pub fn transfer_from_pool_vault_to_user<'a>(
     mint_decimals: u8,
     signer_seeds: &[&[&[u8]]],
 ) -> Result<()> {
+    transfer_from_pool_vault_to_user_with_hook_accounts(
+        authority,
+        from_vault,
+        to,
+        mint,
+        token_program,
+        amount,
+        mint_decimals,
+        signer_seeds,
+        &[],
+    )
+}
+
+pub fn transfer_from_pool_vault_to_user_with_hook_accounts<'a>(
+    authority: AccountInfo<'a>,
+    from_vault: AccountInfo<'a>,
+    to: AccountInfo<'a>,
+    mint: AccountInfo<'a>,
+    token_program: AccountInfo<'a>,
+    amount: u64,
+    mint_decimals: u8,
+    signer_seeds: &[&[&[u8]]],
+    hook_accounts: &[AccountInfo<'a>],
+) -> Result<()> {
     if amount == 0 {
         return Ok(());
     }
-    token_2022::transfer_checked(
-        CpiContext::new_with_signer(
-            *token_program.key,
-            token_2022::TransferChecked {
-                from: from_vault,
-                to,
-                authority,
-                mint,
-            },
-            signer_seeds,
-        ),
+    validate_transfer_hook_accounts(&mint, hook_accounts)?;
+    transfer_checked_with_hook_accounts(
+        from_vault,
+        mint,
+        to,
+        authority,
+        token_program,
         amount,
         mint_decimals,
+        signer_seeds,
+        hook_accounts,
     )
+}
+
+fn transfer_checked_with_hook_accounts<'a>(
+    from: AccountInfo<'a>,
+    mint: AccountInfo<'a>,
+    to: AccountInfo<'a>,
+    authority: AccountInfo<'a>,
+    token_program: AccountInfo<'a>,
+    amount: u64,
+    mint_decimals: u8,
+    signer_seeds: &[&[&[u8]]],
+    hook_accounts: &[AccountInfo<'a>],
+) -> Result<()> {
+    let mut instruction = spl_token_2022::instruction::transfer_checked(
+        token_program.key,
+        from.key,
+        mint.key,
+        to.key,
+        authority.key,
+        &[],
+        amount,
+        mint_decimals,
+    )?;
+    let mut account_infos = vec![from, mint, to, authority];
+    for account in hook_accounts {
+        instruction.accounts.push(if account.is_writable {
+            AccountMeta::new(*account.key, account.is_signer)
+        } else {
+            AccountMeta::new_readonly(*account.key, account.is_signer)
+        });
+        account_infos.push(account.clone());
+    }
+    anchor_lang::solana_program::program::invoke_signed(
+        &instruction,
+        &account_infos,
+        signer_seeds,
+    )
+    .map_err(Into::into)
+}
+
+fn validate_transfer_hook_accounts(
+    mint: &AccountInfo,
+    hook_accounts: &[AccountInfo],
+) -> Result<()> {
+    if *mint.owner == anchor_spl::token::ID {
+        require!(
+            hook_accounts.is_empty(),
+            ErrorCode::InvalidHookAccountFraming
+        );
+        return Ok(());
+    }
+    require!(
+        *mint.owner == anchor_spl::token_2022::ID,
+        ErrorCode::InvalidInput
+    );
+    let mint_data = mint.try_borrow_data()?;
+    let mint_state =
+        StateWithExtensions::<anchor_spl::token_2022::spl_token_2022::state::Mint>::unpack(
+            &mint_data,
+        )
+        .map_err(|_| error!(ErrorCode::InvalidInput))?;
+    let hook_program =
+        anchor_spl::token_2022::spl_token_2022::extension::transfer_hook::get_program_id(
+            &mint_state,
+        );
+    match hook_program {
+        Some(_) => require!(
+            hook_accounts.len() >= 2,
+            ErrorCode::InvalidHookAccountFraming
+        ),
+        None => require!(
+            hook_accounts.is_empty(),
+            ErrorCode::InvalidHookAccountFraming
+        ),
+    }
+    Ok(())
 }
 
 /// Issue a spl_token `MintTo` instruction.
