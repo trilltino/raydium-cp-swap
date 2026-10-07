@@ -84,8 +84,9 @@ pub mod create_pool_fee_reveiver {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("3oE58BKVt8KuYkGxx8zBojugnymWmBiyafWgMrnb6eYy");
+    /// Must be a wrapped-SOL token account (the program charges the pool-creation fee into it).
     #[cfg(feature = "integration")]
-    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    pub const ID: Pubkey = pubkey!("CnoYEaFeS92rnvfY7i1WHY3yKnXgUQqs1xiC1eVj2aYS");
     #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8");
 }
@@ -468,7 +469,10 @@ mod integration_feature_tests {
         assert_eq!(ID.to_string(), "7tRJH4mmEfNGGLf9E8qEvo3oSjq2b75DhSggb1Wz45fJ");
         let deployer = "QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm";
         assert_eq!(admin::ID.to_string(), deployer);
-        assert_eq!(create_pool_fee_reveiver::ID.to_string(), deployer);
+        assert_eq!(
+            create_pool_fee_reveiver::ID.to_string(),
+            "CnoYEaFeS92rnvfY7i1WHY3yKnXgUQqs1xiC1eVj2aYS"
+        );
         assert_eq!(protocol_fee_owner::ID.to_string(), deployer);
         assert_eq!(fund_fee_owner::ID.to_string(), deployer);
     }
