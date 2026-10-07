@@ -84,11 +84,58 @@ pub struct Deposit<'info> {
     pub lp_mint: Box<InterfaceAccount<'info, Mint>>,
 }
 
-pub fn deposit(
-    ctx: Context<Deposit>,
+pub fn deposit<'info>(
+    ctx: Context<'info, Deposit<'info>>,
     lp_token_amount: u64,
     maximum_token_0_amount: u64,
     maximum_token_1_amount: u64,
+) -> Result<()> {
+    deposit_inner(
+        ctx,
+        lp_token_amount,
+        maximum_token_0_amount,
+        maximum_token_1_amount,
+        &[],
+        &[],
+    )
+}
+
+/// Hook-aware `deposit`: the same operation with the Transfer Hook accounts of each token's
+/// transfer framed explicitly. Remaining accounts are the token_0 transfer's slice followed by
+/// the token_1 transfer's slice; each count is the whole slice (extras, hook program, validation
+/// list), and 0 means no hook for that token.
+pub fn deposit_v2<'info>(
+    ctx: Context<'info, Deposit<'info>>,
+    lp_token_amount: u64,
+    maximum_token_0_amount: u64,
+    maximum_token_1_amount: u64,
+    token_0_hook_account_count: u16,
+    token_1_hook_account_count: u16,
+) -> Result<()> {
+    let (token_0_range, token_1_range) = crate::instructions::swap_base_input::hook_account_ranges(
+        ctx.remaining_accounts.len(),
+        token_0_hook_account_count,
+        token_1_hook_account_count,
+    )?;
+    let token_0_hook_accounts = ctx.remaining_accounts[token_0_range].to_vec();
+    let token_1_hook_accounts = ctx.remaining_accounts[token_1_range].to_vec();
+    deposit_inner(
+        ctx,
+        lp_token_amount,
+        maximum_token_0_amount,
+        maximum_token_1_amount,
+        &token_0_hook_accounts,
+        &token_1_hook_accounts,
+    )
+}
+
+fn deposit_inner<'info>(
+    ctx: Context<'info, Deposit<'info>>,
+    lp_token_amount: u64,
+    maximum_token_0_amount: u64,
+    maximum_token_1_amount: u64,
+    token_0_hook_accounts: &[AccountInfo<'info>],
+    token_1_hook_accounts: &[AccountInfo<'info>],
 ) -> Result<()> {
     require_gt!(lp_token_amount, 0);
     let pool_id = ctx.accounts.pool_state.key();
@@ -161,7 +208,7 @@ pub fn deposit(
         return Err(ErrorCode::ExceededSlippage.into());
     }
 
-    transfer_from_user_to_pool_vault(
+    transfer_from_user_to_pool_vault_with_hook_accounts(
         ctx.accounts.owner.to_account_info(),
         ctx.accounts.token_0_account.to_account_info(),
         ctx.accounts.token_0_vault.to_account_info(),
@@ -173,9 +220,10 @@ pub fn deposit(
         },
         transfer_token_0_amount,
         ctx.accounts.vault_0_mint.decimals,
+        token_0_hook_accounts,
     )?;
 
-    transfer_from_user_to_pool_vault(
+    transfer_from_user_to_pool_vault_with_hook_accounts(
         ctx.accounts.owner.to_account_info(),
         ctx.accounts.token_1_account.to_account_info(),
         ctx.accounts.token_1_vault.to_account_info(),
@@ -187,6 +235,7 @@ pub fn deposit(
         },
         transfer_token_1_amount,
         ctx.accounts.vault_1_mint.decimals,
+        token_1_hook_accounts,
     )?;
 
     pool_state.lp_supply = pool_state.lp_supply.checked_add(lp_token_amount).unwrap();

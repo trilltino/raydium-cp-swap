@@ -190,21 +190,74 @@ pub struct InitializeWithPermission<'info> {
     // pub support_mint1_associated: Account<'info, SupportMintAssociated>,
 }
 
-pub fn initialize_with_permission(
-    ctx: Context<InitializeWithPermission>,
+pub fn initialize_with_permission<'info>(
+    ctx: Context<'info, InitializeWithPermission<'info>>,
     init_amount_0: u64,
     init_amount_1: u64,
     open_time: u64,
     creator_fee_on: CreatorFeeOn,
 ) -> Result<()> {
-    let mint0_associated_is_initialized = support_mint_associated_is_initialized(
-        &ctx.remaining_accounts,
-        &ctx.accounts.token_0_mint,
-    )?;
-    let mint1_associated_is_initialized = support_mint_associated_is_initialized(
-        &ctx.remaining_accounts,
-        &ctx.accounts.token_1_mint,
-    )?;
+    let support_accounts = ctx.remaining_accounts;
+    initialize_with_permission_inner(
+        ctx,
+        init_amount_0,
+        init_amount_1,
+        open_time,
+        creator_fee_on,
+        &[],
+        &[],
+        support_accounts,
+    )
+}
+
+/// Hook-aware `initialize_with_permission`: the same operation with the Transfer Hook accounts of each token's
+/// transfer framed explicitly. Remaining accounts are the token_0 transfer's slice followed by
+/// the token_1 transfer's slice; each count is the whole slice (extras, hook program, validation
+/// list), and 0 means no hook for that token.
+pub fn initialize_with_permission_v2<'info>(
+    ctx: Context<'info, InitializeWithPermission<'info>>,
+    init_amount_0: u64,
+    init_amount_1: u64,
+    open_time: u64,
+    creator_fee_on: CreatorFeeOn,
+    token_0_hook_account_count: u16,
+    token_1_hook_account_count: u16,
+) -> Result<()> {
+    let (token_0_range, token_1_range, support_range) =
+        crate::instructions::swap_base_input::hook_account_ranges_with_tail(
+            ctx.remaining_accounts.len(),
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )?;
+    let token_0_hook_accounts = ctx.remaining_accounts[token_0_range].to_vec();
+    let token_1_hook_accounts = ctx.remaining_accounts[token_1_range].to_vec();
+    let support_accounts = ctx.remaining_accounts[support_range].to_vec();
+    initialize_with_permission_inner(
+        ctx,
+        init_amount_0,
+        init_amount_1,
+        open_time,
+        creator_fee_on,
+        &token_0_hook_accounts,
+        &token_1_hook_accounts,
+        &support_accounts,
+    )
+}
+
+fn initialize_with_permission_inner<'info>(
+    ctx: Context<'info, InitializeWithPermission<'info>>,
+    init_amount_0: u64,
+    init_amount_1: u64,
+    open_time: u64,
+    creator_fee_on: CreatorFeeOn,
+    token_0_hook_accounts: &[AccountInfo<'info>],
+    token_1_hook_accounts: &[AccountInfo<'info>],
+    support_accounts: &[AccountInfo<'info>],
+) -> Result<()> {
+    let mint0_associated_is_initialized =
+        support_mint_associated_is_initialized(support_accounts, &ctx.accounts.token_0_mint)?;
+    let mint1_associated_is_initialized =
+        support_mint_associated_is_initialized(support_accounts, &ctx.accounts.token_1_mint)?;
     if !(is_supported_mint(&ctx.accounts.token_0_mint, mint0_associated_is_initialized).unwrap()
         && is_supported_mint(&ctx.accounts.token_1_mint, mint1_associated_is_initialized).unwrap())
     {
@@ -263,7 +316,7 @@ pub fn initialize_with_permission(
     let mut observation_state = ctx.accounts.observation_state.load_init()?;
     observation_state.pool_id = ctx.accounts.pool_state.key();
 
-    transfer_from_user_to_pool_vault(
+    transfer_from_user_to_pool_vault_with_hook_accounts(
         ctx.accounts.payer.to_account_info(),
         ctx.accounts.payer_token_0.to_account_info(),
         ctx.accounts.token_0_vault.to_account_info(),
@@ -271,9 +324,10 @@ pub fn initialize_with_permission(
         ctx.accounts.token_0_program.to_account_info(),
         init_amount_0,
         ctx.accounts.token_0_mint.decimals,
+        token_0_hook_accounts,
     )?;
 
-    transfer_from_user_to_pool_vault(
+    transfer_from_user_to_pool_vault_with_hook_accounts(
         ctx.accounts.payer.to_account_info(),
         ctx.accounts.payer_token_1.to_account_info(),
         ctx.accounts.token_1_vault.to_account_info(),
@@ -281,6 +335,7 @@ pub fn initialize_with_permission(
         ctx.accounts.token_1_program.to_account_info(),
         init_amount_1,
         ctx.accounts.token_1_mint.decimals,
+        token_1_hook_accounts,
     )?;
 
     let token_0_vault =

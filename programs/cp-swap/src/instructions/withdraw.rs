@@ -96,11 +96,58 @@ pub struct Withdraw<'info> {
     pub memo_program: UncheckedAccount<'info>,
 }
 
-pub fn withdraw(
-    ctx: Context<Withdraw>,
+pub fn withdraw<'info>(
+    ctx: Context<'info, Withdraw<'info>>,
     lp_token_amount: u64,
     minimum_token_0_amount: u64,
     minimum_token_1_amount: u64,
+) -> Result<()> {
+    withdraw_inner(
+        ctx,
+        lp_token_amount,
+        minimum_token_0_amount,
+        minimum_token_1_amount,
+        &[],
+        &[],
+    )
+}
+
+/// Hook-aware `withdraw`: the same operation with the Transfer Hook accounts of each token's
+/// transfer framed explicitly. Remaining accounts are the token_0 transfer's slice followed by
+/// the token_1 transfer's slice; each count is the whole slice (extras, hook program, validation
+/// list), and 0 means no hook for that token.
+pub fn withdraw_v2<'info>(
+    ctx: Context<'info, Withdraw<'info>>,
+    lp_token_amount: u64,
+    minimum_token_0_amount: u64,
+    minimum_token_1_amount: u64,
+    token_0_hook_account_count: u16,
+    token_1_hook_account_count: u16,
+) -> Result<()> {
+    let (token_0_range, token_1_range) = crate::instructions::swap_base_input::hook_account_ranges(
+        ctx.remaining_accounts.len(),
+        token_0_hook_account_count,
+        token_1_hook_account_count,
+    )?;
+    let token_0_hook_accounts = ctx.remaining_accounts[token_0_range].to_vec();
+    let token_1_hook_accounts = ctx.remaining_accounts[token_1_range].to_vec();
+    withdraw_inner(
+        ctx,
+        lp_token_amount,
+        minimum_token_0_amount,
+        minimum_token_1_amount,
+        &token_0_hook_accounts,
+        &token_1_hook_accounts,
+    )
+}
+
+fn withdraw_inner<'info>(
+    ctx: Context<'info, Withdraw<'info>>,
+    lp_token_amount: u64,
+    minimum_token_0_amount: u64,
+    minimum_token_1_amount: u64,
+    token_0_hook_accounts: &[AccountInfo<'info>],
+    token_1_hook_accounts: &[AccountInfo<'info>],
 ) -> Result<()> {
     require_gt!(lp_token_amount, 0);
     require_gte!(ctx.accounts.owner_lp_token.amount, lp_token_amount);
@@ -185,7 +232,7 @@ pub fn withdraw(
         &[&[crate::AUTH_SEED.as_bytes(), &[pool_state.auth_bump]]],
     )?;
 
-    transfer_from_pool_vault_to_user(
+    transfer_from_pool_vault_to_user_with_hook_accounts(
         ctx.accounts.authority.to_account_info(),
         ctx.accounts.token_0_vault.to_account_info(),
         ctx.accounts.token_0_account.to_account_info(),
@@ -198,9 +245,10 @@ pub fn withdraw(
         token_0_amount,
         ctx.accounts.vault_0_mint.decimals,
         &[&[crate::AUTH_SEED.as_bytes(), &[pool_state.auth_bump]]],
+        token_0_hook_accounts,
     )?;
 
-    transfer_from_pool_vault_to_user(
+    transfer_from_pool_vault_to_user_with_hook_accounts(
         ctx.accounts.authority.to_account_info(),
         ctx.accounts.token_1_vault.to_account_info(),
         ctx.accounts.token_1_account.to_account_info(),
@@ -213,6 +261,7 @@ pub fn withdraw(
         token_1_amount,
         ctx.accounts.vault_1_mint.decimals,
         &[&[crate::AUTH_SEED.as_bytes(), &[pool_state.auth_bump]]],
+        token_1_hook_accounts,
     )?;
     pool_state.recent_epoch = Clock::get()?.epoch;
 

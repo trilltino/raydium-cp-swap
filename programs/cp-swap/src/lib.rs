@@ -86,6 +86,65 @@ mod versioned_instruction_abi_tests {
         assert_eq!(&data[16..24], &2u64.to_le_bytes());
         assert_eq!(&data[24..], &[5, 0, 6, 0]);
     }
+
+    /// Every hook-aware `_v2` instruction has its own discriminator, and the original instruction
+    /// keeps the one it always had (so an existing client is unaffected).
+    #[test]
+    fn two_token_operations_keep_their_v1_discriminators_and_add_v2() {
+        use anchor_lang::Discriminator;
+        use crate::instruction::*;
+        let pinned: [(&[u8], [u8; 8]); 16] = [
+            (Deposit::DISCRIMINATOR, [242, 35, 198, 137, 82, 225, 242, 182]),
+            (DepositV2::DISCRIMINATOR, [109, 75, 69, 153, 172, 218, 146, 19]),
+            (Withdraw::DISCRIMINATOR, [183, 18, 70, 156, 148, 109, 161, 34]),
+            (WithdrawV2::DISCRIMINATOR, [242, 80, 163, 0, 196, 221, 194, 194]),
+            (CollectProtocolFee::DISCRIMINATOR, [136, 136, 252, 221, 194, 66, 126, 89]),
+            (CollectProtocolFeeV2::DISCRIMINATOR, [246, 11, 93, 67, 221, 244, 185, 10]),
+            (CollectFundFee::DISCRIMINATOR, [167, 138, 78, 149, 223, 194, 6, 126]),
+            (CollectFundFeeV2::DISCRIMINATOR, [21, 250, 142, 236, 215, 232, 49, 184]),
+            (CollectCreatorFee::DISCRIMINATOR, [20, 22, 86, 123, 198, 28, 219, 132]),
+            (CollectCreatorFeeV2::DISCRIMINATOR, [207, 17, 138, 242, 4, 34, 19, 56]),
+            (CollectCreatorFeePermissionless::DISCRIMINATOR, [202, 202, 34, 83, 226, 122, 145, 229]),
+            (CollectCreatorFeePermissionlessV2::DISCRIMINATOR, [100, 50, 213, 79, 188, 138, 6, 207]),
+            (Initialize::DISCRIMINATOR, [175, 175, 109, 31, 13, 152, 155, 237]),
+            (InitializeV2::DISCRIMINATOR, [67, 153, 175, 39, 218, 16, 38, 32]),
+            (InitializeWithPermission::DISCRIMINATOR, [63, 55, 254, 65, 49, 178, 89, 121]),
+            (InitializeWithPermissionV2::DISCRIMINATOR, [20, 6, 23, 116, 191, 226, 176, 71]),
+        ];
+        for (found, expected) in pinned {
+            assert_eq!(found, expected);
+        }
+    }
+
+    #[test]
+    fn two_token_v2_operations_frame_both_slices_after_their_arguments() {
+        let deposit = crate::instruction::DepositV2 {
+            lp_token_amount: 1,
+            maximum_token_0_amount: 2,
+            maximum_token_1_amount: 3,
+            token_0_hook_account_count: 4,
+            token_1_hook_account_count: 5,
+        }
+        .data();
+        assert_eq!(&deposit[32..], &[4, 0, 5, 0]);
+
+        let fee = crate::instruction::CollectProtocolFeeV2 {
+            amount_0_requested: 1,
+            amount_1_requested: 2,
+            token_0_hook_account_count: 6,
+            token_1_hook_account_count: 7,
+        }
+        .data();
+        assert_eq!(&fee[24..], &[6, 0, 7, 0]);
+
+        // No arguments: the two counts follow the discriminator directly.
+        let creator = crate::instruction::CollectCreatorFeeV2 {
+            token_0_hook_account_count: 2,
+            token_1_hook_account_count: 3,
+        }
+        .data();
+        assert_eq!(&creator[8..], &[2, 0, 3, 0]);
+    }
 }
 
 pub mod admin {
@@ -101,7 +160,11 @@ pub mod admin {
     pub const ID: Pubkey = pubkey!("DRayqG9RXYi8WHgWEmRQGrUWRWbhjYWYkCRJDd6JBBak");
     #[cfg(feature = "integration")]
     pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
-    #[cfg(all(not(feature = "devnet"), not(feature = "localnet"), not(feature = "integration")))]
+    #[cfg(all(
+        not(feature = "devnet"),
+        not(feature = "localnet"),
+        not(feature = "integration")
+    ))]
     pub const ID: Pubkey = pubkey!("GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ");
 }
 
@@ -234,12 +297,30 @@ pub mod raydium_cp_swap {
     /// * `amount_0_requested` - The maximum amount of token_0 to send, can be 0 to collect fees in only token_1
     /// * `amount_1_requested` - The maximum amount of token_1 to send, can be 0 to collect fees in only token_0
     ///
-    pub fn collect_protocol_fee(
-        ctx: Context<CollectProtocolFee>,
+    pub fn collect_protocol_fee<'info>(
+        ctx: Context<'info, CollectProtocolFee<'info>>,
         amount_0_requested: u64,
         amount_1_requested: u64,
     ) -> Result<()> {
         instructions::collect_protocol_fee(ctx, amount_0_requested, amount_1_requested)
+    }
+
+    /// Hook-aware `collect_protocol_fee`. Remaining accounts are the token_0 transfer's hook slice followed by
+    /// the token_1 transfer's slice.
+    pub fn collect_protocol_fee_v2<'info>(
+        ctx: Context<'info, CollectProtocolFee<'info>>,
+        amount_0_requested: u64,
+        amount_1_requested: u64,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::collect_protocol_fee_v2(
+            ctx,
+            amount_0_requested,
+            amount_1_requested,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )
     }
 
     /// Collect the fund fee accrued to the pool
@@ -250,12 +331,30 @@ pub mod raydium_cp_swap {
     /// * `amount_0_requested` - The maximum amount of token_0 to send, can be 0 to collect fees in only token_1
     /// * `amount_1_requested` - The maximum amount of token_1 to send, can be 0 to collect fees in only token_0
     ///
-    pub fn collect_fund_fee(
-        ctx: Context<CollectFundFee>,
+    pub fn collect_fund_fee<'info>(
+        ctx: Context<'info, CollectFundFee<'info>>,
         amount_0_requested: u64,
         amount_1_requested: u64,
     ) -> Result<()> {
         instructions::collect_fund_fee(ctx, amount_0_requested, amount_1_requested)
+    }
+
+    /// Hook-aware `collect_fund_fee`. Remaining accounts are the token_0 transfer's hook slice followed by
+    /// the token_1 transfer's slice.
+    pub fn collect_fund_fee_v2<'info>(
+        ctx: Context<'info, CollectFundFee<'info>>,
+        amount_0_requested: u64,
+        amount_1_requested: u64,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::collect_fund_fee_v2(
+            ctx,
+            amount_0_requested,
+            amount_1_requested,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )
     }
 
     /// Collect the creator fee
@@ -264,8 +363,22 @@ pub mod raydium_cp_swap {
     ///
     /// * `ctx` - The context of accounts
     ///
-    pub fn collect_creator_fee(ctx: Context<CollectCreatorFee>) -> Result<()> {
+    pub fn collect_creator_fee<'info>(ctx: Context<'info, CollectCreatorFee<'info>>) -> Result<()> {
         instructions::collect_creator_fee(ctx)
+    }
+
+    /// Hook-aware `collect_creator_fee`. Remaining accounts are the token_0 transfer's hook slice followed by
+    /// the token_1 transfer's slice.
+    pub fn collect_creator_fee_v2<'info>(
+        ctx: Context<'info, CollectCreatorFee<'info>>,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::collect_creator_fee_v2(
+            ctx,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )
     }
 
     /// Collect the creator fee, anyone can call it since the fee is always sent to the
@@ -275,10 +388,24 @@ pub mod raydium_cp_swap {
     ///
     /// * `ctx` - The context of accounts
     ///
-    pub fn collect_creator_fee_permissionless(
-        ctx: Context<CollectCreatorFeePermissionless>,
+    pub fn collect_creator_fee_permissionless<'info>(
+        ctx: Context<'info, CollectCreatorFeePermissionless<'info>>,
     ) -> Result<()> {
         instructions::collect_creator_fee_permissionless(ctx)
+    }
+
+    /// Hook-aware `collect_creator_fee_permissionless`. Remaining accounts are the token_0 transfer's hook slice followed by
+    /// the token_1 transfer's slice.
+    pub fn collect_creator_fee_permissionless_v2<'info>(
+        ctx: Context<'info, CollectCreatorFeePermissionless<'info>>,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::collect_creator_fee_permissionless_v2(
+            ctx,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )
     }
 
     /// Create a permission account
@@ -340,13 +467,33 @@ pub mod raydium_cp_swap {
     /// * `init_amount_1` - the initial amount_1 to deposit
     /// * `open_time` - the timestamp allowed for swap
     ///
-    pub fn initialize(
-        ctx: Context<Initialize>,
+    pub fn initialize<'info>(
+        ctx: Context<'info, Initialize<'info>>,
         init_amount_0: u64,
         init_amount_1: u64,
         open_time: u64,
     ) -> Result<()> {
         instructions::initialize(ctx, init_amount_0, init_amount_1, open_time)
+    }
+
+    /// Hook-aware `initialize`. Remaining accounts are the token_0 transfer's hook slice followed by
+    /// the token_1 transfer's slice.
+    pub fn initialize_v2<'info>(
+        ctx: Context<'info, Initialize<'info>>,
+        init_amount_0: u64,
+        init_amount_1: u64,
+        open_time: u64,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::initialize_v2(
+            ctx,
+            init_amount_0,
+            init_amount_1,
+            open_time,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )
     }
 
     /// Create a pool with permission
@@ -359,8 +506,8 @@ pub mod raydium_cp_swap {
     /// * `open_time` - the timestamp allowed for swap
     /// * `creator_fee_on` - creator fee model, 0：both token0 and token1 (depends on the input), 1: only token0, 2: only token1
     ///
-    pub fn initialize_with_permission(
-        ctx: Context<InitializeWithPermission>,
+    pub fn initialize_with_permission<'info>(
+        ctx: Context<'info, InitializeWithPermission<'info>>,
         init_amount_0: u64,
         init_amount_1: u64,
         open_time: u64,
@@ -375,6 +522,28 @@ pub mod raydium_cp_swap {
         )
     }
 
+    /// Hook-aware `initialize_with_permission`. Remaining accounts are the token_0 transfer's hook slice followed by
+    /// the token_1 transfer's slice.
+    pub fn initialize_with_permission_v2<'info>(
+        ctx: Context<'info, InitializeWithPermission<'info>>,
+        init_amount_0: u64,
+        init_amount_1: u64,
+        open_time: u64,
+        creator_fee_on: CreatorFeeOn,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::initialize_with_permission_v2(
+            ctx,
+            init_amount_0,
+            init_amount_1,
+            open_time,
+            creator_fee_on,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )
+    }
+
     /// Deposit lp token to the pool
     ///
     /// # Arguments
@@ -384,8 +553,8 @@ pub mod raydium_cp_swap {
     /// * `maximum_token_0_amount` -  Maximum token 0 amount to deposit, prevents excessive slippage
     /// * `maximum_token_1_amount` - Maximum token 1 amount to deposit, prevents excessive slippage
     ///
-    pub fn deposit(
-        ctx: Context<Deposit>,
+    pub fn deposit<'info>(
+        ctx: Context<'info, Deposit<'info>>,
         lp_token_amount: u64,
         maximum_token_0_amount: u64,
         maximum_token_1_amount: u64,
@@ -398,6 +567,26 @@ pub mod raydium_cp_swap {
         )
     }
 
+    /// Hook-aware `deposit`. Remaining accounts are the token_0 transfer's hook slice followed by
+    /// the token_1 transfer's slice.
+    pub fn deposit_v2<'info>(
+        ctx: Context<'info, Deposit<'info>>,
+        lp_token_amount: u64,
+        maximum_token_0_amount: u64,
+        maximum_token_1_amount: u64,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::deposit_v2(
+            ctx,
+            lp_token_amount,
+            maximum_token_0_amount,
+            maximum_token_1_amount,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
+        )
+    }
+
     /// Withdraw lp for token0 and token1
     ///
     /// # Arguments
@@ -407,8 +596,8 @@ pub mod raydium_cp_swap {
     /// * `minimum_token_0_amount` -  Minimum amount of token 0 to receive, prevents excessive slippage
     /// * `minimum_token_1_amount` -  Minimum amount of token 1 to receive, prevents excessive slippage
     ///
-    pub fn withdraw(
-        ctx: Context<Withdraw>,
+    pub fn withdraw<'info>(
+        ctx: Context<'info, Withdraw<'info>>,
         lp_token_amount: u64,
         minimum_token_0_amount: u64,
         minimum_token_1_amount: u64,
@@ -418,6 +607,26 @@ pub mod raydium_cp_swap {
             lp_token_amount,
             minimum_token_0_amount,
             minimum_token_1_amount,
+        )
+    }
+
+    /// Hook-aware `withdraw`. Remaining accounts are the token_0 transfer's hook slice followed by
+    /// the token_1 transfer's slice.
+    pub fn withdraw_v2<'info>(
+        ctx: Context<'info, Withdraw<'info>>,
+        lp_token_amount: u64,
+        minimum_token_0_amount: u64,
+        minimum_token_1_amount: u64,
+        token_0_hook_account_count: u16,
+        token_1_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::withdraw_v2(
+            ctx,
+            lp_token_amount,
+            minimum_token_0_amount,
+            minimum_token_1_amount,
+            token_0_hook_account_count,
+            token_1_hook_account_count,
         )
     }
 
@@ -513,7 +722,10 @@ mod integration_feature_tests {
 
     #[test]
     fn integration_feature_uses_our_program_id_and_admin() {
-        assert_eq!(ID.to_string(), "7tRJH4mmEfNGGLf9E8qEvo3oSjq2b75DhSggb1Wz45fJ");
+        assert_eq!(
+            ID.to_string(),
+            "7tRJH4mmEfNGGLf9E8qEvo3oSjq2b75DhSggb1Wz45fJ"
+        );
         let deployer = "QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm";
         assert_eq!(admin::ID.to_string(), deployer);
         assert_eq!(

@@ -98,7 +98,34 @@ pub struct CollectCreatorFee<'info> {
     pub creator_fee_share: UncheckedAccount<'info>,
 }
 
-pub fn collect_creator_fee(ctx: Context<CollectCreatorFee>) -> Result<()> {
+pub fn collect_creator_fee<'info>(ctx: Context<'info, CollectCreatorFee<'info>>) -> Result<()> {
+    collect_creator_fee_inner(ctx, &[], &[])
+}
+
+/// Hook-aware `collect_creator_fee`: the same operation with the Transfer Hook accounts of each token's
+/// transfer framed explicitly. Remaining accounts are the token_0 transfer's slice followed by
+/// the token_1 transfer's slice; each count is the whole slice (extras, hook program, validation
+/// list), and 0 means no hook for that token.
+pub fn collect_creator_fee_v2<'info>(
+    ctx: Context<'info, CollectCreatorFee<'info>>,
+    token_0_hook_account_count: u16,
+    token_1_hook_account_count: u16,
+) -> Result<()> {
+    let (token_0_range, token_1_range) = crate::instructions::swap_base_input::hook_account_ranges(
+        ctx.remaining_accounts.len(),
+        token_0_hook_account_count,
+        token_1_hook_account_count,
+    )?;
+    let token_0_hook_accounts = ctx.remaining_accounts[token_0_range].to_vec();
+    let token_1_hook_accounts = ctx.remaining_accounts[token_1_range].to_vec();
+    collect_creator_fee_inner(ctx, &token_0_hook_accounts, &token_1_hook_accounts)
+}
+
+fn collect_creator_fee_inner<'info>(
+    ctx: Context<'info, CollectCreatorFee<'info>>,
+    token_0_hook_accounts: &[AccountInfo<'info>],
+    token_1_hook_accounts: &[AccountInfo<'info>],
+) -> Result<()> {
     let share_rate =
         resolve_creator_fee_share_rate(&ctx.accounts.creator_fee_share, &ctx.accounts.amm_config)?;
 
@@ -111,7 +138,7 @@ pub fn collect_creator_fee(ctx: Context<CollectCreatorFee>) -> Result<()> {
 
     let signer_seeds: &[&[u8]] = &[crate::AUTH_SEED.as_bytes(), &[ctx.bumps.authority]];
 
-    transfer_from_pool_vault_to_user(
+    transfer_from_pool_vault_to_user_with_hook_accounts(
         ctx.accounts.authority.to_account_info(),
         ctx.accounts.token_0_vault.to_account_info(),
         ctx.accounts.creator_token_0.to_account_info(),
@@ -120,9 +147,10 @@ pub fn collect_creator_fee(ctx: Context<CollectCreatorFee>) -> Result<()> {
         creator_amount_0,
         ctx.accounts.vault_0_mint.decimals,
         &[signer_seeds],
+        token_0_hook_accounts,
     )?;
 
-    transfer_from_pool_vault_to_user(
+    transfer_from_pool_vault_to_user_with_hook_accounts(
         ctx.accounts.authority.to_account_info(),
         ctx.accounts.token_1_vault.to_account_info(),
         ctx.accounts.creator_token_1.to_account_info(),
@@ -131,6 +159,7 @@ pub fn collect_creator_fee(ctx: Context<CollectCreatorFee>) -> Result<()> {
         creator_amount_1,
         ctx.accounts.vault_1_mint.decimals,
         &[signer_seeds],
+        token_1_hook_accounts,
     )?;
 
     Ok(())

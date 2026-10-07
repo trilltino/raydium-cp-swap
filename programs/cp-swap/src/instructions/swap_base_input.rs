@@ -125,6 +125,33 @@ pub(crate) fn hook_account_ranges(
     Ok((0..input_end, input_end..output_end))
 }
 
+/// Like [`hook_account_ranges`], for instructions that read further accounts after the two hook
+/// slices (pool creation reads its support-mint records there): the accounts after the slices
+/// come back as the third range instead of being rejected.
+pub(crate) fn hook_account_ranges_with_tail(
+    remaining_account_count: usize,
+    first_count: u16,
+    second_count: u16,
+) -> Result<(Range<usize>, Range<usize>, Range<usize>)> {
+    require!(
+        (first_count == 0 || first_count >= 2) && (second_count == 0 || second_count >= 2),
+        ErrorCode::InvalidHookAccountFraming
+    );
+    let first_end = usize::from(first_count);
+    let second_end = first_end
+        .checked_add(usize::from(second_count))
+        .ok_or(ErrorCode::InvalidHookAccountFraming)?;
+    require!(
+        second_end <= remaining_account_count,
+        ErrorCode::InvalidHookAccountFraming
+    );
+    Ok((
+        0..first_end,
+        first_end..second_end,
+        second_end..remaining_account_count,
+    ))
+}
+
 fn swap_base_input_inner<'info>(
     ctx: Context<'info, Swap<'info>>,
     amount_in: u64,
@@ -274,7 +301,18 @@ fn swap_base_input_inner<'info>(
 
 #[cfg(test)]
 mod tests {
-    use super::hook_account_ranges;
+    use super::{hook_account_ranges, hook_account_ranges_with_tail};
+
+    #[test]
+    fn hook_account_ranges_with_tail_leave_the_rest_to_the_caller() {
+        let (first, second, tail) = hook_account_ranges_with_tail(9, 3, 2).unwrap();
+        assert_eq!((first, second, tail), (0..3, 3..5, 5..9));
+        // No hooks: everything is the tail, as before the framing existed.
+        let (first, second, tail) = hook_account_ranges_with_tail(4, 0, 0).unwrap();
+        assert_eq!((first, second, tail), (0..0, 0..0, 0..4));
+        assert!(hook_account_ranges_with_tail(3, 2, 2).is_err());
+        assert!(hook_account_ranges_with_tail(5, 1, 0).is_err());
+    }
 
     #[test]
     fn hook_account_ranges_keep_transfer_slices_disjoint() {

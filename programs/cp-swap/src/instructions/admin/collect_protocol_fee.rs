@@ -71,10 +71,47 @@ pub struct CollectProtocolFee<'info> {
     pub token_program_2022: Program<'info, Token2022>,
 }
 
-pub fn collect_protocol_fee(
-    ctx: Context<CollectProtocolFee>,
+pub fn collect_protocol_fee<'info>(
+    ctx: Context<'info, CollectProtocolFee<'info>>,
     amount_0_requested: u64,
     amount_1_requested: u64,
+) -> Result<()> {
+    collect_protocol_fee_inner(ctx, amount_0_requested, amount_1_requested, &[], &[])
+}
+
+/// Hook-aware `collect_protocol_fee`: the same operation with the Transfer Hook accounts of each token's
+/// transfer framed explicitly. Remaining accounts are the token_0 transfer's slice followed by
+/// the token_1 transfer's slice; each count is the whole slice (extras, hook program, validation
+/// list), and 0 means no hook for that token.
+pub fn collect_protocol_fee_v2<'info>(
+    ctx: Context<'info, CollectProtocolFee<'info>>,
+    amount_0_requested: u64,
+    amount_1_requested: u64,
+    token_0_hook_account_count: u16,
+    token_1_hook_account_count: u16,
+) -> Result<()> {
+    let (token_0_range, token_1_range) = crate::instructions::swap_base_input::hook_account_ranges(
+        ctx.remaining_accounts.len(),
+        token_0_hook_account_count,
+        token_1_hook_account_count,
+    )?;
+    let token_0_hook_accounts = ctx.remaining_accounts[token_0_range].to_vec();
+    let token_1_hook_accounts = ctx.remaining_accounts[token_1_range].to_vec();
+    collect_protocol_fee_inner(
+        ctx,
+        amount_0_requested,
+        amount_1_requested,
+        &token_0_hook_accounts,
+        &token_1_hook_accounts,
+    )
+}
+
+fn collect_protocol_fee_inner<'info>(
+    ctx: Context<'info, CollectProtocolFee<'info>>,
+    amount_0_requested: u64,
+    amount_1_requested: u64,
+    token_0_hook_accounts: &[AccountInfo<'info>],
+    token_1_hook_accounts: &[AccountInfo<'info>],
 ) -> Result<()> {
     let amount_0: u64;
     let amount_1: u64;
@@ -97,7 +134,7 @@ pub fn collect_protocol_fee(
         auth_bump = pool_state.auth_bump;
         pool_state.recent_epoch = Clock::get()?.epoch;
     }
-    transfer_from_pool_vault_to_user(
+    transfer_from_pool_vault_to_user_with_hook_accounts(
         ctx.accounts.authority.to_account_info(),
         ctx.accounts.token_0_vault.to_account_info(),
         ctx.accounts.recipient_token_0_account.to_account_info(),
@@ -110,9 +147,10 @@ pub fn collect_protocol_fee(
         amount_0,
         ctx.accounts.vault_0_mint.decimals,
         &[&[crate::AUTH_SEED.as_bytes(), &[auth_bump]]],
+        token_0_hook_accounts,
     )?;
 
-    transfer_from_pool_vault_to_user(
+    transfer_from_pool_vault_to_user_with_hook_accounts(
         ctx.accounts.authority.to_account_info(),
         ctx.accounts.token_1_vault.to_account_info(),
         ctx.accounts.recipient_token_1_account.to_account_info(),
@@ -125,6 +163,7 @@ pub fn collect_protocol_fee(
         amount_1,
         ctx.accounts.vault_1_mint.decimals,
         &[&[crate::AUTH_SEED.as_bytes(), &[auth_bump]]],
+        token_1_hook_accounts,
     )?;
 
     Ok(())
