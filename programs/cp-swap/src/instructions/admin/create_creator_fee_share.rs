@@ -8,7 +8,9 @@ pub mod create_creator_fee_share_owner {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRayDe7AGe6nFg6egr7D42ECyDf15GV52WFwZAbfUo1R");
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("RayFfEhJHWToYRsr8sjVZZkdddBeYxyJazDitpdE7zJ");
 }
 

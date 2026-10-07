@@ -8,7 +8,9 @@ pub mod create_support_mint_associated_owner {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRaypyeDL6y1dUusMgwyeDM5JebjhsSi8aRXobKQ9DcQ");
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("Rayv2LG4tFSMizZhMP8aSUYxDPjV8qJtx2NQY9RKYZy");
 }
 

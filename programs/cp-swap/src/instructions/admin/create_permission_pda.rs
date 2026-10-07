@@ -7,7 +7,9 @@ pub mod create_permission_pda_owner {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRayJkSKsijbcEqdooK4uUGcT6gjbEuwUh7V6Nmqct7M");
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("RayqjDRsNEFuPcDE4JpEScwJvwusmHYuNZ3MgET4D7U");
 }
 

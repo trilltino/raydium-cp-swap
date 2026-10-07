@@ -21,8 +21,13 @@ solana_security_txt::security_txt! {
 
 #[cfg(feature = "devnet")]
 declare_id!("DRaycpLY18LhpbydsBWbVJtxpNv9oXPgjRSfpF2bWpYb");
-#[cfg(not(feature = "devnet"))]
+#[cfg(feature = "integration")]
+declare_id!("7tRJH4mmEfNGGLf9E8qEvo3oSjq2b75DhSggb1Wz45fJ");
+#[cfg(not(any(feature = "devnet", feature = "integration")))]
 declare_id!("CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C");
+
+#[cfg(all(feature = "integration", any(feature = "devnet", feature = "localnet")))]
+compile_error!("the `integration` feature cannot be combined with `devnet` or `localnet`");
 
 #[cfg(test)]
 mod versioned_instruction_abi_tests {
@@ -69,7 +74,9 @@ pub mod admin {
     ));
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRayqG9RXYi8WHgWEmRQGrUWRWbhjYWYkCRJDd6JBBak");
-    #[cfg(all(not(feature = "devnet"), not(feature = "localnet")))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(all(not(feature = "devnet"), not(feature = "localnet"), not(feature = "integration")))]
     pub const ID: Pubkey = pubkey!("GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ");
 }
 
@@ -77,7 +84,9 @@ pub mod create_pool_fee_reveiver {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("3oE58BKVt8KuYkGxx8zBojugnymWmBiyafWgMrnb6eYy");
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("DNXgeM9EiiaAbaWvwjHj9fQQLAX5ZsfHyvmYUNRAdNC8");
 }
 
@@ -85,7 +94,9 @@ pub mod collect_lamports {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRaydJNq54dSDHUqYCE3G8YySgaXfZucbh7dTXw9fBMs");
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("RayGkhY93thaTgCv98sx1pNLgBHhJDxWUeZXp4bjmnp");
 }
 
@@ -93,7 +104,9 @@ pub mod fund_fee_owner {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRay33UmULQCeawH3dVpJfN3uqLj6Qtq4ymSRx2pAgGK");
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("FUNDduJTA7XcckKHKfAoEnnhuSud2JUCUZv6opWEjrBU");
 }
 
@@ -101,7 +114,9 @@ pub mod protocol_fee_owner {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRay33UmULQCeawH3dVpJfN3uqLj6Qtq4ymSRx2pAgGK");
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("ProCXqRcXJjoUd1RNoo28bSizAA6EEqt9wURZYPDc5u");
 }
 
@@ -109,7 +124,9 @@ pub mod shared_creator_fee_owner {
     use super::{pubkey, Pubkey};
     #[cfg(feature = "devnet")]
     pub const ID: Pubkey = pubkey!("DRay2aRSqmGVMkcvsQNU4iskM1ztX31EP7pyrtrntqBQ");
-    #[cfg(not(feature = "devnet"))]
+    #[cfg(feature = "integration")]
+    pub const ID: Pubkey = pubkey!("QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm");
+    #[cfg(not(any(feature = "devnet", feature = "integration")))]
     pub const ID: Pubkey = pubkey!("RayRrPVNAg3hTPa1yfZiR49FqCpkmiLaP4yWsVBnoBZ");
 }
 
@@ -439,5 +456,20 @@ pub mod raydium_cp_swap {
         ctx: Context<'info, CollectExcessLamports<'info>>,
     ) -> Result<()> {
         instructions::collect_excess_lamports(ctx)
+    }
+}
+
+#[cfg(all(test, feature = "integration"))]
+mod integration_feature_tests {
+    use super::*;
+
+    #[test]
+    fn integration_feature_uses_our_program_id_and_admin() {
+        assert_eq!(ID.to_string(), "7tRJH4mmEfNGGLf9E8qEvo3oSjq2b75DhSggb1Wz45fJ");
+        let deployer = "QHgnAZswA5wt8ABUv5n7yM4FXFJdNwLsNYXKSVKB1Pm";
+        assert_eq!(admin::ID.to_string(), deployer);
+        assert_eq!(create_pool_fee_reveiver::ID.to_string(), deployer);
+        assert_eq!(protocol_fee_owner::ID.to_string(), deployer);
+        assert_eq!(fund_fee_owner::ID.to_string(), deployer);
     }
 }
