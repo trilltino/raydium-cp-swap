@@ -104,7 +104,7 @@ pub fn swap_base_input_v2<'info>(
     )
 }
 
-fn hook_account_ranges(
+pub(crate) fn hook_account_ranges(
     remaining_account_count: usize,
     input_count: u16,
     output_count: u16,

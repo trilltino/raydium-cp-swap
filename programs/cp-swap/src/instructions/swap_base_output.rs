@@ -1,4 +1,4 @@
-use super::swap_base_input::Swap;
+use super::swap_base_input::{hook_account_ranges, Swap};
 use crate::curve::calculator::CurveCalculator;
 use crate::error::ErrorCode;
 use crate::states::*;
@@ -6,10 +6,46 @@ use crate::utils::token::*;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program;
 
-pub fn swap_base_output(
-    ctx: Context<Swap>,
+pub fn swap_base_output<'info>(
+    ctx: Context<'info, Swap<'info>>,
     max_amount_in: u64,
     amount_out_received: u64,
+) -> Result<()> {
+    swap_base_output_inner(ctx, max_amount_in, amount_out_received, &[], &[])
+}
+
+/// Hook-aware exact-output swap: the same swap with the Transfer Hook accounts of each transfer
+/// framed explicitly. Remaining accounts are the input transfer's slice followed by the output
+/// transfer's slice; each count is the whole slice (extras, hook program, validation list).
+pub fn swap_base_output_v2<'info>(
+    ctx: Context<'info, Swap<'info>>,
+    max_amount_in: u64,
+    amount_out_received: u64,
+    input_hook_account_count: u16,
+    output_hook_account_count: u16,
+) -> Result<()> {
+    let (input_range, output_range) = hook_account_ranges(
+        ctx.remaining_accounts.len(),
+        input_hook_account_count,
+        output_hook_account_count,
+    )?;
+    let input_hook_accounts = ctx.remaining_accounts[input_range].to_vec();
+    let output_hook_accounts = ctx.remaining_accounts[output_range].to_vec();
+    swap_base_output_inner(
+        ctx,
+        max_amount_in,
+        amount_out_received,
+        &input_hook_accounts,
+        &output_hook_accounts,
+    )
+}
+
+fn swap_base_output_inner<'info>(
+    ctx: Context<'info, Swap<'info>>,
+    max_amount_in: u64,
+    amount_out_received: u64,
+    input_hook_accounts: &[AccountInfo<'info>],
+    output_hook_accounts: &[AccountInfo<'info>],
 ) -> Result<()> {
     require_gt!(amount_out_received, 0);
     let block_timestamp = solana_program::clock::Clock::get()?.unix_timestamp as u64;
@@ -121,7 +157,7 @@ pub fn swap_base_output(
     });
     require_gte!(constant_after, constant_before);
 
-    transfer_from_user_to_pool_vault(
+    transfer_from_user_to_pool_vault_with_hook_accounts(
         ctx.accounts.payer.to_account_info(),
         ctx.accounts.input_token_account.to_account_info(),
         ctx.accounts.input_vault.to_account_info(),
@@ -129,9 +165,10 @@ pub fn swap_base_output(
         ctx.accounts.input_token_program.to_account_info(),
         input_transfer_amount,
         ctx.accounts.input_token_mint.decimals,
+        input_hook_accounts,
     )?;
 
-    transfer_from_pool_vault_to_user(
+    transfer_from_pool_vault_to_user_with_hook_accounts(
         ctx.accounts.authority.to_account_info(),
         ctx.accounts.output_vault.to_account_info(),
         ctx.accounts.output_token_account.to_account_info(),
@@ -140,6 +177,7 @@ pub fn swap_base_output(
         output_transfer_amount,
         ctx.accounts.output_token_mint.decimals,
         &[&[crate::AUTH_SEED.as_bytes(), &[pool_state.auth_bump]]],
+        output_hook_accounts,
     )?;
 
     // update the previous price to the observation

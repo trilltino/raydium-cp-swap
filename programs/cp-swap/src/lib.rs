@@ -61,6 +61,31 @@ mod versioned_instruction_abi_tests {
         assert_eq!(&data[..8], &[179, 135, 209, 217, 135, 75, 40, 58]);
         assert_eq!(&data[24..], &[3, 0, 4, 0]);
     }
+
+    #[test]
+    fn swap_base_output_v2_frames_each_transfer_slice_in_data() {
+        let data = crate::instruction::SwapBaseOutputV2 {
+            max_amount_in: 1,
+            amount_out: 2,
+            input_hook_account_count: 5,
+            output_hook_account_count: 6,
+        }
+        .data();
+
+        // The V1 `swap_base_output` discriminator is unchanged; V2 has its own.
+        assert_eq!(
+            &crate::instruction::SwapBaseOutput {
+                max_amount_in: 1,
+                amount_out: 2,
+            }
+            .data()[..8],
+            &[55, 217, 98, 86, 163, 74, 180, 173]
+        );
+        assert_eq!(&data[..8], &[29, 143, 223, 109, 3, 111, 151, 147]);
+        assert_eq!(&data[8..16], &1u64.to_le_bytes());
+        assert_eq!(&data[16..24], &2u64.to_le_bytes());
+        assert_eq!(&data[24..], &[5, 0, 6, 0]);
+    }
 }
 
 pub mod admin {
@@ -438,8 +463,30 @@ pub mod raydium_cp_swap {
     /// * `max_amount_in` -  input amount prevents excessive slippage
     /// * `amount_out` -  amount of output token
     ///
-    pub fn swap_base_output(ctx: Context<Swap>, max_amount_in: u64, amount_out: u64) -> Result<()> {
+    pub fn swap_base_output<'info>(
+        ctx: Context<'info, Swap<'info>>,
+        max_amount_in: u64,
+        amount_out: u64,
+    ) -> Result<()> {
         instructions::swap_base_output(ctx, max_amount_in, amount_out)
+    }
+
+    /// Hook-aware exact-output swap. Remaining accounts are framed as the input
+    /// transfer slice followed by the output transfer slice.
+    pub fn swap_base_output_v2<'info>(
+        ctx: Context<'info, Swap<'info>>,
+        max_amount_in: u64,
+        amount_out: u64,
+        input_hook_account_count: u16,
+        output_hook_account_count: u16,
+    ) -> Result<()> {
+        instructions::swap_base_output_v2(
+            ctx,
+            max_amount_in,
+            amount_out,
+            input_hook_account_count,
+            output_hook_account_count,
+        )
     }
 
     /// Create support token22 mint account which can create pool and send rewards while ignoring unsupported extensions.
